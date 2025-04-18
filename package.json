@@ -1,0 +1,41 @@
+{
+  "name": "rzx-code",
+  "version": "1.0.0",
+  "description": "Ecossistema completo de apps com assistente de IA integrado",
+  "main": "server/index.ts",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx server/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "NODE_ENV=production node dist/server/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DZX-CORE/RZX-CODE.git"
+  },
+  "keywords": [
+    "ai",
+    "assistant",
+    "claude",
+    "chat",
+    "development"
+  ],
+  "author": "DZX-CORE",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/DZX-CORE/RZX-CODE/issues"
+  },
+  "homepage": "https://github.com/DZX-CORE/RZX-CODE#readme",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.10.0",
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.9.0",
+    "@types/ws": "^8.5.9",
+    "tsx": "^4.1.2",
+    "typescript": "^5.2.2"
+  }
+}
