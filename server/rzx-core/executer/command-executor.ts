@@ -1,218 +1,242 @@
 /**
- * Command Executor - Implementação para executar comandos no RZX-CODE
- * 
- * Este módulo é responsável por executar comandos como criar projetos,
- * listar projetos, executar comandos no sistema, etc.
+ * Executor de Comandos do RZX-CODE
+ * Permite que a IA execute comandos reais no sistema
  */
 
+import { log } from '../../vite';
+import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import { log } from '../../vite';
+import * as util from 'util';
+
+// Promisify de funções do Node.js
+const exec = util.promisify(child_process.exec);
+const mkdir = util.promisify(fs.mkdir);
+const writeFile = util.promisify(fs.writeFile);
+const readFile = util.promisify(fs.readFile);
 
 /**
- * CommandExecutor - Classe estática para executar comandos
+ * Classe que expõe métodos para executar comandos no sistema
  */
-class CommandExecutor {
+export class CommandExecutor {
   /**
-   * Cria um novo projeto
+   * Executa um comando shell no sistema
    */
-  static async createProject(name: string, type: string, files: Array<{path: string, content: string}>) {
+  static async executeCommand(command: string): Promise<any> {
     try {
-      // Validar nome do projeto
-      if (!name || name.trim() === '') {
-        return { 
-          success: false, 
-          error: 'Nome do projeto é obrigatório' 
+      log(`[CommandExecutor] Executando comando: ${command}`);
+      
+      // Lista de comandos potencialmente perigosos
+      const dangerousCommands = [
+        'rm -rf', 'sudo', 'chmod', 'chown', '>', '>>', '|',
+        'eval', 'exec', 'kill', 'reboot', 'shutdown'
+      ];
+      
+      // Verificar se o comando contém operações potencialmente perigosas
+      const isDangerous = dangerousCommands.some(cmd => command.includes(cmd));
+      
+      if (isDangerous) {
+        return {
+          success: false,
+          error: 'Comando não permitido por razões de segurança'
         };
       }
       
-      // Criar diretório base de projetos se não existir
-      const projectsDir = path.join(process.cwd(), 'projects');
-      if (!fs.existsSync(projectsDir)) {
-        fs.mkdirSync(projectsDir, { recursive: true });
+      // Executar o comando com timeout de 10 segundos
+      const { stdout, stderr } = await exec(command, { timeout: 10000 });
+      
+      return {
+        success: true,
+        stdout,
+        stderr,
+        message: 'Comando executado com sucesso'
+      };
+    } catch (error: any) {
+      log(`[CommandExecutor] Erro ao executar comando: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        stderr: error.stderr
+      };
+    }
+  }
+  
+  /**
+   * Cria um arquivo com o conteúdo especificado
+   */
+  static async createFile(filePath: string, content: string): Promise<any> {
+    try {
+      log(`[CommandExecutor] Criando arquivo: ${filePath}`);
+      
+      // Normalizar o caminho para evitar acessos fora do diretório permitido
+      const normalizedPath = path.normalize(filePath);
+      
+      // Validação de segurança para evitar escrita em locais sensíveis
+      if (normalizedPath.startsWith('..') || normalizedPath.includes('../')) {
+        return {
+          success: false,
+          error: 'Caminho de arquivo não autorizado'
+        };
       }
       
-      // Criar ID do projeto
-      const projectId = `${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+      // Extrair o diretório e criar se não existir
+      const dir = path.dirname(normalizedPath);
+      if (!fs.existsSync(dir)) {
+        await mkdir(dir, { recursive: true });
+      }
       
-      // Criar diretório do projeto
-      const projectPath = path.join(projectsDir, projectId);
-      fs.mkdirSync(projectPath, { recursive: true });
+      // Escrever no arquivo
+      await writeFile(normalizedPath, content, 'utf-8');
       
-      // Salvar arquivos
+      return {
+        success: true,
+        filePath: normalizedPath,
+        message: `Arquivo criado com sucesso: ${normalizedPath}`
+      };
+    } catch (error: any) {
+      log(`[CommandExecutor] Erro ao criar arquivo: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+  
+  /**
+   * Lê o conteúdo de um arquivo
+   */
+  static async readFile(filePath: string): Promise<any> {
+    try {
+      log(`[CommandExecutor] Lendo arquivo: ${filePath}`);
+      
+      // Normalizar o caminho para evitar acessos fora do diretório permitido
+      const normalizedPath = path.normalize(filePath);
+      
+      // Validação de segurança
+      if (normalizedPath.startsWith('..') || normalizedPath.includes('../')) {
+        return {
+          success: false,
+          error: 'Caminho de arquivo não autorizado'
+        };
+      }
+      
+      // Verificar se o arquivo existe
+      if (!fs.existsSync(normalizedPath)) {
+        return {
+          success: false,
+          error: `Arquivo não encontrado: ${normalizedPath}`
+        };
+      }
+      
+      // Ler o arquivo
+      const content = await readFile(normalizedPath, 'utf-8');
+      
+      return {
+        success: true,
+        filePath: normalizedPath,
+        content,
+        message: `Arquivo lido com sucesso: ${normalizedPath}`
+      };
+    } catch (error: any) {
+      log(`[CommandExecutor] Erro ao ler arquivo: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+  
+  /**
+   * Cria um projeto completo com os arquivos especificados
+   */
+  static async createProject(
+    name: string,
+    type: string,
+    files: Array<{path: string, content: string}>
+  ): Promise<any> {
+    try {
+      log(`[CommandExecutor] Criando projeto: ${name} do tipo ${type}`);
+      
+      // Gerar um ID único para o projeto
+      const projectId = `${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+      const projectPath = path.join(process.cwd(), 'projects', projectId);
+      
+      // Criar o diretório do projeto
+      if (!fs.existsSync(projectPath)) {
+        await mkdir(projectPath, { recursive: true });
+      }
+      
+      // Criar todos os arquivos do projeto
+      const createdFiles = [];
       for (const file of files) {
-        // Verificar se o arquivo tem pastas no caminho
+        if (!file.path) continue;
+        
         const filePath = path.join(projectPath, file.path);
         const fileDir = path.dirname(filePath);
         
-        // Criar diretórios se necessário
         if (!fs.existsSync(fileDir)) {
-          fs.mkdirSync(fileDir, { recursive: true });
+          await mkdir(fileDir, { recursive: true });
         }
         
-        // Escrever conteúdo do arquivo
-        fs.writeFileSync(filePath, file.content);
+        await writeFile(filePath, file.content || '', 'utf-8');
+        createdFiles.push(filePath);
       }
-      
-      // Criar arquivo de metadados
-      const metadata = {
-        id: projectId,
-        name,
-        type,
-        createdAt: new Date().toISOString(),
-        files: files.map(f => f.path)
-      };
-      
-      fs.writeFileSync(
-        path.join(projectPath, '.metadata.json'),
-        JSON.stringify(metadata, null, 2)
-      );
-      
-      log(`[COMMAND-EXECUTOR] Projeto criado: ${projectId} (${files.length} arquivos)`);
       
       return {
         success: true,
         projectId,
         projectPath,
-        message: `Projeto ${name} criado com sucesso`
+        projectType: type,
+        projectName: name,
+        createdFiles,
+        message: `Projeto criado com sucesso: ${projectId}`
       };
     } catch (error: any) {
-      log(`[COMMAND-EXECUTOR] Erro ao criar projeto: ${error.message}`);
-      return { 
-        success: false, 
-        error: `Erro ao criar projeto: ${error.message}` 
+      log(`[CommandExecutor] Erro ao criar projeto: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
   
   /**
-   * Lista todos os projetos
+   * Cria uma visualização de preview
    */
-  static async listProjects() {
+  static async createPreview(
+    content: string,
+    type: 'html' | 'markdown' | 'image' | 'json' = 'html'
+  ): Promise<any> {
     try {
-      const projectsDir = path.join(process.cwd(), 'projects');
+      log(`[CommandExecutor] Criando preview do tipo ${type}`);
       
-      // Verificar se o diretório existe
-      if (!fs.existsSync(projectsDir)) {
-        fs.mkdirSync(projectsDir, { recursive: true });
-        return [];
+      // Criar previews temporários
+      const previewFilename = `preview_${Date.now()}.${type === 'html' ? 'html' : 'txt'}`;
+      const tempDir = path.join(process.cwd(), 'temp_previews');
+      
+      if (!fs.existsSync(tempDir)) {
+        await mkdir(tempDir, { recursive: true });
       }
       
-      // Listar projetos
-      const projects = fs.readdirSync(projectsDir)
-        .filter(file => {
-          const stats = fs.statSync(path.join(projectsDir, file));
-          return stats.isDirectory();
-        })
-        .map(dir => {
-          const projectPath = path.join(projectsDir, dir);
-          const metadataPath = path.join(projectPath, '.metadata.json');
-          
-          let metadata: any = {
-            id: dir,
-            name: dir,
-            type: 'unknown',
-            createdAt: new Date().toISOString(),
-            files: []
-          };
-          
-          // Tentar ler metadados
-          if (fs.existsSync(metadataPath)) {
-            try {
-              metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-            } catch (e) {
-              // Ignorar erro, usar metadados padrão
-            }
-          }
-          
-          return metadata;
-        });
-      
-      return projects;
-    } catch (error: any) {
-      log(`[COMMAND-EXECUTOR] Erro ao listar projetos: ${error.message}`);
-      return [];
-    }
-  }
-  
-  /**
-   * Cria uma prévia do projeto (para visualização)
-   */
-  static async createPreview(projectId: string) {
-    try {
-      const projectsDir = path.join(process.cwd(), 'projects');
-      const projectPath = path.join(projectsDir, projectId);
-      
-      // Verificar se o projeto existe
-      if (!fs.existsSync(projectPath)) {
-        return { 
-          success: false, 
-          error: `Projeto ${projectId} não encontrado` 
-        };
-      }
-      
-      // Verificar se o projeto tem um arquivo index.html
-      const indexPath = path.join(projectPath, 'index.html');
-      if (!fs.existsSync(indexPath)) {
-        return { 
-          success: false, 
-          error: 'Projeto não tem um arquivo index.html' 
-        };
-      }
-      
-      // Criar diretório de prévia
-      const previewsDir = path.join(process.cwd(), 'temp_previews');
-      if (!fs.existsSync(previewsDir)) {
-        fs.mkdirSync(previewsDir, { recursive: true });
-      }
-      
-      // Criar ID único para a prévia
-      const previewId = `preview-${Date.now()}-${uuidv4().substring(0, 8)}`;
-      const previewPath = path.join(previewsDir, previewId);
-      
-      // Copiar todos os arquivos do projeto para a prévia
-      fs.mkdirSync(previewPath, { recursive: true });
-      
-      // Função recursiva para copiar diretórios
-      const copyDir = (src: string, dest: string) => {
-        const entries = fs.readdirSync(src, { withFileTypes: true });
-        
-        for (const entry of entries) {
-          const srcPath = path.join(src, entry.name);
-          const destPath = path.join(dest, entry.name);
-          
-          if (entry.isDirectory()) {
-            fs.mkdirSync(destPath, { recursive: true });
-            copyDir(srcPath, destPath);
-          } else {
-            fs.copyFileSync(srcPath, destPath);
-          }
-        }
-      };
-      
-      copyDir(projectPath, previewPath);
-      
-      // Criar o URL de prévia
-      const previewUrl = `/previews/${previewId}/`;
-      
-      log(`[COMMAND-EXECUTOR] Prévia criada: ${previewId} para o projeto ${projectId}`);
+      const previewPath = path.join(tempDir, previewFilename);
+      await writeFile(previewPath, content, 'utf-8');
       
       return {
         success: true,
-        previewId,
-        previewUrl,
+        previewUrl: `/previews/${previewFilename}`,
         previewPath,
-        message: 'Prévia criada com sucesso'
+        type,
+        message: `Preview criado com sucesso: ${previewFilename}`
       };
     } catch (error: any) {
-      log(`[COMMAND-EXECUTOR] Erro ao criar prévia: ${error.message}`);
-      return { 
-        success: false, 
-        error: `Erro ao criar prévia: ${error.message}` 
+      log(`[CommandExecutor] Erro ao criar preview: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
 }
 
+// Exportar a classe para uso em outros módulos
 export default CommandExecutor;
